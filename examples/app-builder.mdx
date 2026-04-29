@@ -1,0 +1,132 @@
+---
+title: "App Builder: scaffold React apps with a Cursor agent"
+description: "Run a local Cursor agent against a Vite project, stream tool activity and assistant responses to a chat UI, and preview the generated app in an iframe."
+---
+
+The App Builder demonstrates a complete app-building loop driven by the Cursor SDK. When you describe an app in the chat UI, a local Cursor agent edits a Vite React TypeScript project running in a temp workspace on your machine. The Vite dev server hot-reloads each file the agent touches, so the preview iframe updates in real time as the agent works. The example is a Next.js host app and lives in `sdk/app-builder` in the cookbook repository.
+
+<Warning>
+  This example is intended as a local demo. Do not deploy it as a shared public service without adding authentication, per-user storage, and proper secret handling. The API key is stored in plain text at `~/.app-builder/settings.json`.
+</Warning>
+
+## Getting started
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    pnpm install
+    ```
+  </Step>
+  <Step title="Start the Next.js host app">
+    ```bash
+    pnpm dev
+    ```
+  </Step>
+  <Step title="Open the app">
+    Navigate to [http://localhost:3000](http://localhost:3000).
+  </Step>
+  <Step title="Enter your API key">
+    On first launch the app prompts for a Cursor API key. The key is validated against the API and then stored locally at `~/.app-builder/settings.json`. Subsequent visits restore it automatically.
+  </Step>
+  <Step title="Describe your app">
+    Type a description in the chat input — for example, "Build a Pomodoro timer with start, pause, and reset buttons" — and send it. The agent starts editing the Vite project and the preview iframe reloads as files change.
+  </Step>
+</Steps>
+
+## How it works
+
+### Session and workspace setup
+
+`createSession` in `src/lib/app-builder/server.ts` allocates a UUID, creates an isolated Vite project directory under `~/.app-builder/sessions/<id>/app`, installs dependencies, and starts a Vite dev server on a free port. The preview URL is returned to the client and loaded in an iframe.
+
+```typescript
+const session = await createSession(apiKey)
+// session.previewUrl => "http://127.0.0.1:<port>"
+// session.projectPath => "~/.app-builder/sessions/<uuid>/app"
+```
+
+### Agent creation
+
+The SDK agent is created lazily on the first chat message. It receives a `local.cwd` pointing at the Vite project directory so the agent can read and edit the generated files directly:
+
+```typescript
+session.agent = await Agent.create({
+  apiKey: session.apiKey,
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  local: {
+    cwd: session.projectPath,
+    envVars: { BROWSER: "none" },
+  },
+})
+```
+
+The agent is reused across messages in the same session, preserving conversation context. The `BROWSER: "none"` env var prevents Vite from trying to open a browser tab in the agent's environment.
+
+### Streaming agent responses
+
+`streamAgentResponse` sends the user's message to the agent and forwards SDK events to the client through a server-sent events stream. The caller supplies an `emit` function that receives `AgentStreamEvent` values:
+
+```typescript
+await streamAgentResponse(
+  sessionId,
+  userMessage,
+  modelId,
+  (event) => {
+    // forward to client over SSE
+  }
+)
+```
+
+The `AgentStreamEvent` union covers every event type the server can emit:
+
+```typescript
+type AgentStreamEvent =
+  | { type: "assistant_delta"; text: string }
+  | { type: "thinking"; id?: string; text: string }
+  | { type: "tool_call"; callId?: string; name: string; status: string; args?: unknown; truncatedArgs?: boolean }
+  | { type: "status"; status: string; message?: string }
+  | { type: "task"; status?: string; text?: string }
+```
+
+The implementation iterates `run.stream()` and maps each `SDKMessage` to the appropriate `AgentStreamEvent`:
+
+```typescript
+const run = await agent.send(buildPrompt(userMessage, session), modelSelection)
+
+for await (const event of run.stream()) {
+  emitSdkMessage(event, emit)
+}
+
+await run.wait()
+```
+
+### Agent instructions
+
+Every prompt is prefixed with instructions that keep the agent focused on the Vite workspace and prevent it from starting a second dev server:
+
+```
+You are building a local Vite React TypeScript application for a live preview product.
+Edit files directly in the current workspace. The dev server is already running and hot reloads when files change.
+Keep changes focused on the user's requested app. Prefer small, working iterations over broad rewrites.
+Do not start another long-running dev server unless the existing preview server is broken.
+```
+
+### Model selection
+
+The server fetches the available model list from `Cursor.models.list` when the session is created and returns it to the client as a `ModelCatalogItem[]`. The client sends the selected model id with each message. The server re-encodes the selection into the format the local runtime expects before passing it to `agent.send`.
+
+```typescript
+type ModelCatalogItem = {
+  id: string
+  label: string
+  description?: string
+  parameters: ModelParameterConfig[]
+  defaultParams: ModelParamConfig[]
+}
+```
+
+If model fetching fails, the server falls back to `auto` and `composer-2`.
+
+### Project naming
+
+After the first exchange, the app calls `generateProjectName` to derive a short sidebar label from the conversation. A lightweight `composer-2` agent call extracts a 2–5 word name wrapped in `<projectName>…</projectName>` XML. If that times out (default: 15 seconds), a simple keyword-extraction fallback is used instead.

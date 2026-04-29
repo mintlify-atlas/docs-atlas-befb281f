@@ -1,0 +1,91 @@
+---
+title: "Cursor SDK for TypeScript: overview"
+description: "The @cursor/sdk package lets you run Cursor's coding agent from TypeScript apps and scripts, locally or in the cloud, with full event streaming support."
+---
+
+The `@cursor/sdk` package is the official TypeScript API for Cursor's coding agent. It lets you create agents that run in your local workspace or against a remote GitHub repository, stream events as a run progresses, manage conversation state across multiple turns, and inspect token usage and run results—all from your own code.
+
+The SDK requires **Node.js 22 or later**.
+
+## Key concepts
+
+<CardGroup cols={2}>
+  <Card title="Agent" icon="robot">
+    A stateful session that holds conversation history and workspace context. Create one with `Agent.create()` and reuse it across multiple prompts.
+  </Card>
+  <Card title="Run" icon="play">
+    A single prompt execution. Calling `agent.send()` returns a `Run` object you can stream, wait on, or cancel.
+  </Card>
+  <Card title="Stream" icon="wave-square">
+    An async iterable of `SDKMessage` events emitted while a run executes—text deltas, tool calls, thinking blocks, and status updates.
+  </Card>
+  <Card title="Model" icon="cpu">
+    The underlying LLM used by the agent. Pass `{ id: "composer-2" }` or any model ID returned by `Cursor.models.list()`.
+  </Card>
+  <Card title="Local execution" icon="laptop">
+    The agent operates on a directory on the current machine. Pass `local: { cwd: "/path/to/project" }` to `Agent.create()`.
+  </Card>
+  <Card title="Cloud execution" icon="cloud">
+    The agent clones a GitHub repository into a managed cloud environment. Pass `cloud: { repos: [{ url, startingRef }] }` instead.
+  </Card>
+</CardGroup>
+
+## Installation
+
+<CodeGroup>
+
+```bash npm
+npm install @cursor/sdk
+```
+
+```bash yarn
+yarn add @cursor/sdk
+```
+
+```bash pnpm
+pnpm add @cursor/sdk
+```
+
+</CodeGroup>
+
+## Quick example
+
+```typescript index.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "SDK quickstart",
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  local: { cwd: process.cwd() },
+})
+
+const run = await agent.send("Explain this project in one paragraph.")
+
+for await (const event of run.stream()) {
+  if (event.type !== "assistant") continue
+  for (const block of event.message.content) {
+    if (block.type === "text") process.stdout.write(block.text)
+  }
+}
+
+await run.wait()
+```
+
+## Learn more
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/sdk/authentication">
+    Get an API key and configure it for local and production use.
+  </Card>
+  <Card title="Agents" icon="robot" href="/sdk/agents">
+    All options for `Agent.create()`, lifecycle management, and local vs. cloud execution.
+  </Card>
+  <Card title="Runs and streaming" icon="play" href="/sdk/runs-and-streaming">
+    Stream agent events, handle every `SDKMessage` type, and get the final `RunResult`.
+  </Card>
+</CardGroup>
+
+<Note>
+  The full TypeScript API reference is available at [cursor.com/docs/api/sdk/typescript](https://cursor.com/docs/api/sdk/typescript).
+</Note>

@@ -1,0 +1,187 @@
+---
+title: "Coding Agent CLI: terminal interface for Cursor agents"
+description: "Build a command-line coding agent with one-shot prompts, an interactive TUI, and the ability to switch between local and cloud execution at runtime."
+---
+
+The Coding Agent CLI shows how to wrap the Cursor SDK in a real terminal application. It supports two modes: pass a prompt on the command line for a one-shot run that streams the response to stdout, or omit the prompt to open an interactive TUI powered by [Ink](https://github.com/vadimdemedes/ink) and React. Inside the TUI you can switch between local execution (agent runs against a directory on your machine) and cloud execution (agent runs inside Cursor's cloud environment against a GitHub repository), change the model mid-session, and reset conversation context — all without restarting the process. The full example lives in `sdk/coding-agent-cli` in the cookbook repository.
+
+## Getting started
+
+<Steps>
+  <Step title="Install dependencies">
+    Node.js 22 or newer is required.
+
+    ```bash
+    pnpm install
+    ```
+  </Step>
+  <Step title="Set your API key">
+    ```bash
+    export CURSOR_API_KEY="crsr_..."
+    ```
+  </Step>
+  <Step title="Run a one-shot prompt">
+    Pass a quoted prompt to get a streamed response and exit.
+
+    ```bash
+    pnpm dev -- "Explain how this project is structured"
+    ```
+
+    You can also pipe a prompt from stdin:
+
+    ```bash
+    printf "Review the recent changes" | pnpm dev
+    ```
+  </Step>
+  <Step title="Open the interactive TUI">
+    Omit the prompt to launch the TUI in the current directory.
+
+    ```bash
+    pnpm dev
+    ```
+
+    Type `/` to open the command menu. Use `--cwd` to point the agent at a different workspace.
+  </Step>
+</Steps>
+
+## CLI reference
+
+```bash
+code-agent [options] "your task"
+code-agent [options]
+```
+
+| Flag | Short | Description |
+|---|---|---|
+| `--cwd <path>` | `-C` | Workspace directory for the local agent. Defaults to the current directory. |
+| `--model <id>` | `-m` | Model id. Defaults to `CURSOR_MODEL` env var or `composer-2`. |
+| `--force` | | Expire a stuck active local run before starting a new one. |
+| `--help` | `-h` | Print usage and exit. |
+
+**Examples**
+
+```bash
+# Analyse the current directory
+code-agent "Explain the auth flow"
+
+# Point at a different project
+code-agent --cwd ../my-app "Add a regression test for the parser"
+
+# Choose a specific model
+code-agent --model composer-2 "Refactor the database layer"
+
+# Open the TUI
+code-agent
+```
+
+## TUI slash commands
+
+Inside the interactive TUI, type any of the following commands and press Enter.
+
+| Command | Description |
+|---|---|
+| `/help` | Show available commands. |
+| `/local` | Run future prompts in the local workspace. |
+| `/cloud` | Run future prompts in Cursor cloud. |
+| `/model` | Open a picker with available Cursor models. |
+| `/reset` | Start a fresh agent and clear context. |
+| `/exit` | Exit the TUI. |
+| `/quit` | Exit the TUI. |
+
+<Tip>
+  The command menu filters as you type. Typing `/cl` will narrow the list to `/cloud` immediately.
+</Tip>
+
+## How it works
+
+### CodingAgentSession
+
+All agent state lives in the `CodingAgentSession` class (`src/agent.ts`). It creates an SDK agent, holds the current `Run`, and exposes methods for sending prompts, cancelling runs, switching execution mode, and changing the model.
+
+```typescript
+const session = new CodingAgentSession({
+  apiKey: process.env.CURSOR_API_KEY,
+  cwd: "/path/to/workspace",
+  model: { id: "composer-2" },
+  force: false,
+})
+
+await session.sendPrompt({
+  prompt: "Explain how this project is structured",
+  onEvent: (event) => {
+    if (event.type === "assistant_delta") {
+      process.stdout.write(event.text)
+    }
+  },
+})
+
+await session.dispose()
+```
+
+`sendPrompt` streams events through the `onEvent` callback. The `AgentEvent` union covers every event type the session can emit:
+
+```typescript
+type AgentEvent =
+  | { type: "assistant_delta"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "tool"; callId?: string; name: string; params?: string; status: string }
+  | { type: "status"; status: string; message?: string }
+  | { type: "task"; status?: string; text?: string }
+  | { type: "result"; status: string; durationMs?: number; usage?: TokenUsage }
+```
+
+### Local vs cloud execution
+
+When the session is in `local` mode, `Agent.create` receives a `local: { cwd }` option pointing at your workspace directory. When you switch to `cloud` mode, the session reads the `remote.origin.url` from git and the current branch, then recreates the agent with a `cloud: { repos }` option:
+
+```typescript
+// Local execution — agent reads and edits files on disk
+Agent.create({
+  apiKey,
+  name: "Lightweight coding agent",
+  model: modelSelection,
+  local: { cwd: "/path/to/workspace" },
+})
+
+// Cloud execution — agent runs in Cursor's cloud against a GitHub repo
+Agent.create({
+  apiKey,
+  name: "Lightweight coding agent",
+  model: modelSelection,
+  cloud: {
+    repos: [{ url: "https://github.com/owner/repo", startingRef: "main" }],
+  },
+})
+```
+
+Switching modes while a run is in progress throws an error — `setExecutionMode` checks for an active `Run` before replacing the agent.
+
+### TUI rendering
+
+The interactive TUI is built with Ink and React (`src/tui/App.tsx`). Ink renders React component trees to the terminal using an alternate screen buffer, which lets the app redraw in place without scrolling. The entry point renders the `App` component at up to 30 fps:
+
+```typescript
+const instance = render(
+  React.createElement(App, {
+    apiKey,
+    cwd: options.cwd,
+    force: options.force,
+    initialModel: { id: options.model },
+  }),
+  { alternateScreen: true, maxFps: 30 }
+)
+
+await instance.waitUntilExit()
+```
+
+### Agent instructions
+
+Every prompt is prepended with a concise system instruction that scopes the agent to terminal-friendly, focused coding tasks:
+
+```
+You are a lightweight coding agent running from a terminal.
+Work in the configured workspace.
+Help the user inspect, edit, and validate code with small focused changes.
+Before changing files, understand the surrounding code and preserve unrelated user work.
+Keep progress updates concise and summarize the result clearly.
+```

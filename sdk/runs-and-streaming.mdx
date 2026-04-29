@@ -1,0 +1,159 @@
+---
+title: "Stream agent events with run.stream()"
+description: "Call agent.send() to get a Run, iterate run.stream() for SDKMessage events, then call run.wait() for the RunResult with status, duration, and token usage."
+---
+
+A **run** represents a single prompt execution. When you call `agent.send()`, the agent begins processing the prompt and returns a `Run` object immediately. You then consume events from `run.stream()` as they are emitted—text deltas, tool calls, status updates—and finally call `run.wait()` to get the completed result.
+
+## Starting a run
+
+`agent.send(prompt)` accepts a prompt string and returns a `Promise<Run>`:
+
+```typescript
+const run = await agent.send("Explain this project in one paragraph.")
+```
+
+You can also pass options as a second argument. When running locally, pass a `model` to override the agent's default, or set `local.force` to allow writes even when the workspace has untracked changes:
+
+```typescript
+const run = await agent.send(prompt, {
+  model: { id: "composer-2" },
+  local: { force: true },
+})
+```
+
+## Streaming events
+
+`run.stream()` returns an async iterable of `SDKMessage` events. Iterate over it with `for await`:
+
+```typescript
+for await (const event of run.stream()) {
+  // handle event
+}
+```
+
+### `SDKMessage` event types
+
+| Type | Description |
+|------|-------------|
+| `"assistant"` | The model produced content. Contains a `message.content` array of blocks. |
+| `"thinking"` | An extended-thinking text block. Contains a `text` string. |
+| `"tool_call"` | A tool was invoked or updated. Contains `name`, `call_id`, `args`, and `status`. |
+| `"status"` | The agent reported a status change. Contains `status` and an optional `message`. |
+| `"task"` | Task progress from the agent. Contains optional `status` and `text` fields. |
+
+### Handling all event types
+
+The following example shows how to process every event type:
+
+```typescript index.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  local: { cwd: process.cwd() },
+})
+
+const run = await agent.send("Refactor the authentication module.")
+
+for await (const event of run.stream()) {
+  switch (event.type) {
+    case "assistant":
+      for (const block of event.message.content) {
+        if (block.type === "text") {
+          // Streamed text from the model
+          process.stdout.write(block.text)
+        } else {
+          // tool_use block — the model is requesting a tool call
+          console.log(`Tool requested: ${block.name} (${block.id})`)
+        }
+      }
+      break
+
+    case "thinking":
+      // Extended thinking text (only emitted for thinking-enabled models)
+      console.log(`[thinking] ${event.text}`)
+      break
+
+    case "tool_call":
+      // Status update for a tool invocation
+      console.log(`[tool] ${event.name} [${event.call_id}] — ${event.status}`)
+      break
+
+    case "status":
+      console.log(`[status] ${event.status}${event.message ? `: ${event.message}` : ""}`)
+      break
+
+    case "task":
+      if (event.text) console.log(`[task] ${event.text}`)
+      break
+  }
+}
+
+const result = await run.wait()
+console.log(`\nDone — ${result.status} in ${result.durationMs}ms`)
+```
+
+## Waiting for the result
+
+After the stream ends, call `run.wait()` to retrieve the final `RunResult`. This resolves once the run has fully completed and returns:
+
+- `status` — Final run status (e.g. `"completed"`, `"cancelled"`, `"error"`).
+- `durationMs` — Total wall-clock time for the run in milliseconds.
+- `usage` — Token counts with `inputTokens` and `outputTokens`.
+- `result` — Optional final text result from the agent.
+
+```typescript
+const result = await run.wait()
+
+console.log(result.status)           // "completed"
+console.log(result.durationMs)       // 4821
+console.log(result.usage?.inputTokens)   // 1024
+console.log(result.usage?.outputTokens)  // 312
+```
+
+<Note>
+  Always call `run.wait()` after iterating the stream. It flushes any remaining work and ensures resources are properly cleaned up.
+</Note>
+
+## Cancelling a run
+
+Before cancelling, check whether the current run supports it:
+
+```typescript
+if (run.supports("cancel")) {
+  await run.cancel()
+} else {
+  const reason = run.unsupportedReason("cancel")
+  console.log(`Cannot cancel: ${reason}`)
+}
+```
+
+`run.supports("cancel")` returns `false` for run types where cancellation is not available—for example, once a run has already completed. If you call `run.cancel()` on an unsupported run, the SDK throws. Always guard with `run.supports("cancel")` first.
+
+## Minimal streaming example
+
+The quickstart distills streaming down to its simplest form—printing only assistant text:
+
+```typescript index.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "SDK quickstart",
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  local: { cwd: process.cwd() },
+})
+
+const run = await agent.send("Explain this project in one paragraph.")
+
+for await (const event of run.stream()) {
+  if (event.type !== "assistant") continue
+  for (const block of event.message.content) {
+    if (block.type === "text") process.stdout.write(block.text)
+  }
+}
+
+await run.wait()
+```

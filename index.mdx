@@ -1,133 +1,56 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
-icon: 'star'
+title: "Cursor Cookbook: Build with the Cursor SDK"
+description: "Practical examples for building apps, CLIs, and workflows with the Cursor SDK. Stream agent responses, manage runs, and automate coding tasks."
 ---
 
-## Setting up
+The Cursor Cookbook is a collection of ready-to-run examples showing how to embed Cursor's coding agent into your own applications. Each example demonstrates a real-world pattern — from a minimal Node.js script that streams agent output, to a full Next.js app with a live React preview, to a kanban board for managing cloud agents.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn what the Cursor SDK is, what it can do, and how the examples in this cookbook are organized.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Run your first Cursor agent in under five minutes with a minimal Node.js script.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="SDK Overview" icon="layer-group" href="/sdk/overview">
+    Understand the core SDK concepts — agents, runs, streaming, models, and execution modes.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Authentication" icon="key" href="/sdk/authentication">
+    Get a Cursor API key and learn how to pass it to the SDK in your apps and scripts.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Browse the examples
 
-Everything you need to create world-class documentation.
+<CardGroup cols={3}>
+  <Card title="Coding Agent CLI" icon="terminal" href="/examples/coding-agent-cli">
+    A terminal app with one-shot prompts and an interactive TUI, switchable between local and cloud execution.
+  </Card>
+  <Card title="App Builder" icon="wand-magic-sparkles" href="/examples/app-builder">
+    A Next.js app that scaffolds and iterates on a live React preview using a local Cursor agent session.
+  </Card>
+  <Card title="Agent Kanban" icon="table-columns" href="/examples/agent-kanban">
+    A Linear-style board for viewing, creating, and managing Cursor Cloud Agents.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## SDK reference
 
-## Make your content agent ready
-
-Make your docs work for humans and AI agents alike.
-
-<Columns cols={2}>
-  <Card
-    title="Prompt component"
-    icon="robot"
-    href="/agent-ready/prompt"
-  >
-    Embed shareable AI prompts readers can copy or open in Cursor.
+<CardGroup cols={2}>
+  <Card title="Agents" icon="robot" href="/sdk/agents">
+    Create local and cloud agents with `Agent.create()` and manage their lifecycle.
   </Card>
-  <Card
-    title="Visibility"
-    icon="eye"
-    href="/agent-ready/visibility"
-  >
-    Show different content to humans and agents reading your docs.
+  <Card title="Runs & Streaming" icon="bolt" href="/sdk/runs-and-streaming">
+    Send prompts and stream events — assistant text, tool calls, status updates, and more.
   </Card>
-  <Card
-    title="Contextual menu"
-    icon="bolt"
-    href="/agent-ready/contextual"
-  >
-    Give readers one-click access to Claude, ChatGPT, Cursor, and more.
+  <Card title="Models" icon="sliders" href="/sdk/models">
+    List available models, select variants, and tune parameters like reasoning effort.
   </Card>
-  <Card
-    title="AI coding tools"
-    icon="wand-magic-sparkles"
-    href="/ai-tools/claude-code"
-  >
-    Set up Claude Code, Cursor, or Windsurf with Mintlify's skill.
+  <Card title="Cloud Agents" icon="cloud" href="/sdk/cloud-agents">
+    Run agents against GitHub repositories in Cursor's cloud environment.
   </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Note>
+  All examples require a Cursor API key. Get yours from the [Cursor integrations dashboard](https://cursor.com/dashboard/integrations) and set it as the `CURSOR_API_KEY` environment variable.
+</Note>

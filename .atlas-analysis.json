@@ -1,0 +1,78 @@
+{
+  "projectType": "general",
+  "projectName": "Cursor Cookbook",
+  "projectDescription": "A collection of example apps and scripts demonstrating how to build with the Cursor SDK, covering local agents, cloud agents, CLI tools, and full-stack web apps.",
+  "theme": "luma",
+  "primaryColor": "#040404",
+  "lightColor": "#1d263e",
+  "darkColor": "#d8e0f2",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "SDK Examples",
+            "pages": [
+              "examples/coding-agent-cli",
+              "examples/app-builder",
+              "examples/agent-kanban"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK Reference",
+        "groups": [
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "sdk/overview",
+              "sdk/authentication",
+              "sdk/agents",
+              "sdk/runs-and-streaming"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "sdk/models",
+              "sdk/cloud-agents",
+              "sdk/error-handling"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Local agent execution against a workspace directory",
+    "Cloud agent execution against GitHub repositories",
+    "Streaming agent events (assistant text, tool calls, status, thinking)",
+    "Model selection and parameter configuration",
+    "Interactive TUI for terminal-based agent sessions",
+    "Full-stack Next.js app with live React preview (App Builder)",
+    "Kanban board UI for managing Cursor Cloud Agents",
+    "Run cancellation and session lifecycle management"
+  ],
+  "publicApiSurface": [
+    "Agent.create({ apiKey, name, model, local, cloud })",
+    "agent.send(prompt, options) → Run",
+    "run.stream() → AsyncIterable<SDKMessage>",
+    "run.wait() → RunResult",
+    "run.cancel()",
+    "run.supports(capability)",
+    "Cursor.models.list({ apiKey })",
+    "Cursor.me({ apiKey })",
+    "CodingAgentSession (class)",
+    "AgentEvent (type union)",
+    "ExecutionMode ('local' | 'cloud')"
+  ]
+}

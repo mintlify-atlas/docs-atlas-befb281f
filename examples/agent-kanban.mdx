@@ -1,0 +1,179 @@
+---
+title: "Agent Kanban: manage Cloud Agents with a board UI"
+description: "List, group, and create Cursor Cloud Agents from a kanban board, with per-card artifact previews, PR links, and an API-key onboarding flow built with Next.js."
+---
+
+The Agent Kanban is a Linear-style board for Cursor Cloud Agents. It uses the Cursor SDK to list running and completed cloud agents, group them into columns, preview image and video artifacts directly on the cards, and create new agents from a repository and prompt. The example shows how to build a full management UI on top of the Cloud Agents API using Next.js, and lives in `sdk/agent-kanban` in the cookbook repository.
+
+## Getting started
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    pnpm install
+    ```
+  </Step>
+  <Step title="Start the Next.js app">
+    ```bash
+    pnpm dev
+    ```
+  </Step>
+  <Step title="Open the board">
+    Navigate to the local URL printed in the terminal (usually `http://localhost:3000`).
+  </Step>
+  <Step title="Enter your API key">
+    Complete the onboarding prompt by pasting a Cursor API key from the [Cursor integrations dashboard](https://cursor.com/dashboard/integrations). Check **Remember this key** to store it at `~/.agent-kanban/settings.json`; leave it unchecked to keep the key only in the in-memory session for the current browser visit.
+  </Step>
+</Steps>
+
+## Board features
+
+<CardGroup cols={2}>
+  <Card title="Grouping" icon="columns-3">
+    Group agents by status, repository, branch, or creation date using the toolbar. Each grouping rearranges the columns without a page reload.
+  </Card>
+  <Card title="Agent cards" icon="rectangle-history">
+    Each card shows the agent's status, repository and branch, latest activity, PR link, and up to four artifact thumbnails (images and videos ranked first).
+  </Card>
+  <Card title="Artifact previews" icon="image">
+    Image and video artifacts are proxied through local API routes with your credentials so the browser can display them without exposing your API key to the client.
+  </Card>
+  <Card title="Create agent" icon="plus">
+    The create-agent flow lets you pick a repository, set an optional branch, choose a model, and type a prompt. Submitting calls `Agent.create` with `cloud: { repos }` and immediately adds the new card to the board.
+  </Card>
+</CardGroup>
+
+## Key SDK patterns
+
+### Creating a cloud agent
+
+`createCloudAgent` in `src/lib/agents/server.ts` resolves the selected repository, then calls `Agent.create` with a `cloud` option. The `autoCreatePR` flag tells Cursor to open a pull request when the agent finishes:
+
+```typescript
+const createdAgent = await Agent.create({
+  apiKey,
+  name: input.name?.trim() || prompt.slice(0, 80),
+  model: input.modelId ? { id: input.modelId } : undefined,
+  cloud: {
+    repos: [
+      {
+        url: repository.url,
+        startingRef: input.branch?.trim() || undefined,
+      },
+    ],
+    autoCreatePR: input.autoCreatePR ?? true,
+  },
+})
+
+// Send the initial prompt to start the run
+if (createdAgent.send) {
+  await createdAgent.send(prompt)
+}
+```
+
+### Listing agents
+
+`listCloudAgents` calls `Agent.list` with `runtime: "cloud"` and enriches each result with run history and artifact previews fetched in parallel:
+
+```typescript
+const response = await Agent.list({
+  apiKey,
+  runtime: "cloud",
+  limit: 50,
+  cursor: options.cursor,
+  includeArchived: options.includeArchived ?? false,
+})
+
+const agents = await Promise.all(
+  rawAgents.map(async (rawAgent) => {
+    const card = normalizeAgent(rawAgent)
+    const [runs, artifacts] = await Promise.all([
+      listRunsForAgent(apiKey, card.id).catch(() => []),
+      listArtifactsForAgent(apiKey, card.id).catch(() => []),
+    ])
+    enrichAgentCardFromRuns(card, runs)
+    card.artifacts = artifacts
+    return card
+  })
+)
+```
+
+The `nextCursor` field from the response is forwarded to the client for pagination.
+
+### Artifact media proxying
+
+Artifact files are accessed through authenticated API routes (`/api/agents/<id>/artifacts/media`) rather than embedding presigned URLs directly in the HTML. The server calls `agent.downloadArtifact(path)`, resolves the download URL or binary response, and streams the bytes back to the browser. This keeps the API key server-side.
+
+`withArtifactMediaUrl` rewrites the `mediaUrl` on each preview to point at the local proxy route before the data is sent to the client:
+
+```typescript
+function withArtifactMediaUrl(agentId: string, artifact: ArtifactPreview): ArtifactPreview {
+  if (artifact.previewKind === "file") {
+    return artifact
+  }
+
+  return {
+    ...artifact,
+    mediaUrl: `/api/agents/${encodeURIComponent(agentId)}/artifacts/media?path=${encodeURIComponent(artifact.path)}`,
+  }
+}
+```
+
+## Types
+
+The shared type definitions live in `src/lib/agents/types.ts`.
+
+**`AgentCard`** — the normalised representation of a cloud agent displayed on the board:
+
+```typescript
+type AgentCard = {
+  id: string
+  title: string
+  status: string
+  latestRunId?: string
+  durationMs?: number
+  repository: string
+  repositoryUrl?: string
+  branch?: string
+  createdBy?: string
+  createdAt?: string
+  updatedAt?: string
+  prUrl?: string
+  latestMessage?: string
+  artifacts: ArtifactPreview[]
+}
+```
+
+**`ArtifactPreview`** — metadata for a single agent artifact, with an optional server-proxied media URL:
+
+```typescript
+type ArtifactPreview = {
+  path: string
+  name: string
+  size?: number
+  contentType?: string
+  mediaUrl?: string
+  previewKind: "image" | "video" | "file"
+}
+```
+
+**`CreateAgentInput`** — the payload submitted by the create-agent form:
+
+```typescript
+type CreateAgentInput = {
+  name?: string
+  prompt: string
+  repositoryId: string
+  modelId?: string
+  branch?: string
+  autoCreatePR?: boolean
+}
+```
+
+## Rate limiting and caching
+
+Repository listing is rate-limited by the Cloud Agents API. The server caches the repository list in memory for 55 seconds per API key to avoid hitting limits when the create-agent form is opened repeatedly. If artifact previews stop loading, refresh the board — the proxy route fetches a fresh download URL on each request.
+
+<Note>
+  The repository cache is keyed by API key and stored on `globalThis` so it survives Next.js hot reloads in development without being reset on every request.
+</Note>

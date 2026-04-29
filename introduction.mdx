@@ -1,0 +1,37 @@
+---
+title: "Cursor Cookbook: SDK examples and recipes"
+description: "The Cursor Cookbook contains runnable examples for the Cursor SDK — a TypeScript API for embedding Cursor's coding agent in apps, scripts, and workflows."
+---
+
+The Cursor SDK is a TypeScript API for running Cursor's coding agent from your own applications, scripts, and automation workflows. It supports the same agent across local workspaces and cloud runtimes, streams agent events as runs progress, and lets you manage prompts, models, conversation state, and run lifecycle from code. This cookbook collects small, focused examples that show the SDK in action — each one runnable in a few commands.
+
+## What you can build
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    A minimal Node.js script that creates a local agent, sends one prompt, and streams the response to stdout.
+  </Card>
+  <Card title="Coding Agent CLI" icon="terminal" href="/examples/coding-agent-cli">
+    A command-line interface for spawning Cursor agents from your terminal, with one-shot and interactive TUI modes.
+  </Card>
+  <Card title="App Builder" icon="wand-magic-sparkles" href="/examples/app-builder">
+    A web app for scaffolding new projects and iterating on ideas using a Cursor agent in a sandboxed cloud environment.
+  </Card>
+  <Card title="Agent Kanban" icon="table-columns" href="/examples/agent-kanban">
+    A kanban board for viewing and managing Cursor Cloud Agents, grouped by status or repository with artifact previews.
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+- Node.js 22 or newer
+- A Cursor API key from [cursor.com/dashboard/integrations](https://cursor.com/dashboard/integrations)
+- pnpm (used in all examples)
+
+## How each example is structured
+
+Every example in the `sdk/` directory is a self-contained package with its own `package.json` and `tsconfig.json`. Each one declares `@cursor/sdk` as a dependency and uses `tsx` to run TypeScript directly without a separate compile step. To run any example, install its dependencies with `pnpm install` and start it with `pnpm dev`.
+
+<Note>
+  Set the `CURSOR_API_KEY` environment variable before running any example. You can get a key from the [Cursor integrations dashboard](https://cursor.com/dashboard/integrations).
+</Note>

@@ -1,0 +1,129 @@
+---
+title: "Create and manage agents with Agent.create()"
+description: "Configure Agent.create() options, choose local or cloud execution, manage conversation state across sends, and release resources with asyncDispose."
+---
+
+An agent is a persistent session that holds conversation history and workspace context. When you call `agent.send()` multiple times on the same agent, it carries the prior turns forward—making it suitable for multi-step workflows where each prompt builds on the previous one.
+
+## `Agent.create()` options
+
+<ParamField body="apiKey" type="string" required>
+  Your Cursor API key. Use `process.env.CURSOR_API_KEY` to keep it out of source code. See [Authentication](/sdk/authentication) for setup instructions.
+</ParamField>
+
+<ParamField body="model" type="object" required>
+  The model to use for runs. Pass an object with an `id` property.
+
+  ```typescript
+  model: { id: "composer-2" }
+  ```
+
+  Use `Cursor.models.list()` to fetch the available model IDs for your account.
+</ParamField>
+
+<ParamField body="name" type="string">
+  A human-readable label for the agent, useful for identifying sessions in logs and dashboards.
+</ParamField>
+
+<ParamField body="local" type="object">
+  Run the agent against a local directory. Mutually exclusive with `cloud`.
+
+  ```typescript
+  local: { cwd: "/path/to/project" }
+  ```
+
+  - `cwd` — Absolute path to the workspace root. The agent reads, edits, and creates files within this directory.
+</ParamField>
+
+<ParamField body="cloud" type="object">
+  Run the agent in a managed cloud environment seeded from a GitHub repository. Mutually exclusive with `local`.
+
+  ```typescript
+  cloud: {
+    repos: [{ url: "https://github.com/owner/repo", startingRef: "main" }]
+  }
+  ```
+
+  - `repos` — Array of repositories to mount. Each entry requires a `url` (GitHub HTTPS URL) and accepts an optional `startingRef` (branch name or commit SHA).
+</ParamField>
+
+## Creating a local agent
+
+Use `local` when the agent should work on files that already exist on the current machine. The quickstart example creates a local agent pointed at the working directory:
+
+```typescript index.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "SDK quickstart",
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  local: { cwd: process.cwd() },
+})
+```
+
+Only one run can be active on a local agent at a time. Wait for the current run to finish before calling `agent.send()` again.
+
+## Creating a cloud agent
+
+Use `cloud` when you want the agent to operate on a repository without touching local files. The SDK detects the current repository's remote URL and branch to populate the `repos` array:
+
+```typescript agent.ts
+import { Agent } from "@cursor/sdk"
+
+// Provide the GitHub HTTPS URL and the branch to start from
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "Lightweight coding agent",
+  model: { id: "composer-2" },
+  cloud: {
+    repos: [
+      {
+        url: "https://github.com/owner/repo",
+        startingRef: "main",
+      },
+    ],
+  },
+})
+```
+
+<Note>
+  Cloud execution currently requires the repository to be hosted on GitHub. The `url` must be a valid GitHub HTTPS URL.
+</Note>
+
+## Sending prompts
+
+Call `agent.send(prompt)` to start a run. It returns a `Run` object you can stream and wait on:
+
+```typescript
+const run = await agent.send("Refactor the authentication module.")
+```
+
+For full details on streaming events and waiting for results, see [Runs and streaming](/sdk/runs-and-streaming).
+
+## Conversation history
+
+Agents accumulate conversation history across `send()` calls. Each new prompt is appended to the prior exchange, so the agent retains context about files it has already read or edited. To start a fresh conversation without discarding the workspace configuration, dispose of the current agent and create a new one.
+
+## Releasing resources
+
+Always dispose of an agent when you are done with it. The SDK supports `Symbol.asyncDispose`, which integrates with the `await using` declaration in TypeScript 5.2+:
+
+```typescript
+{
+  await using agent = await Agent.create({
+    apiKey: process.env.CURSOR_API_KEY,
+    model: { id: "composer-2" },
+    local: { cwd: process.cwd() },
+  })
+
+  const run = await agent.send("Add JSDoc comments to all exported functions.")
+  await run.wait()
+} // agent is automatically disposed here
+```
+
+If you are not using `await using`, call the dispose method directly:
+
+```typescript
+await agent[Symbol.asyncDispose]()
+```

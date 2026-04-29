@@ -1,0 +1,185 @@
+---
+title: "Select and configure models in the Cursor SDK"
+description: "List available models with Cursor.models.list(), build a ModelSelection with variants and params, and pass it to Agent.create() or agent.send()."
+---
+
+The Cursor SDK lets you fetch the models available to your account and pass a typed selection object wherever a model is required. Every agent and run that targets local execution accepts a `model` option; cloud agents also accept one. The simplest selection is `{ id: "composer-2" }`, which works as a safe default when you do not need to query the catalog.
+
+## `Cursor.models.list()`
+
+Call `Cursor.models.list()` to retrieve the full model catalog for an API key. The method returns an array of `SDKModel` objects.
+
+```typescript
+import { Cursor } from "@cursor/sdk"
+
+const models = await Cursor.models.list({ apiKey: process.env.CURSOR_API_KEY })
+```
+
+<ParamField body="apiKey" type="string" required>
+  Your Cursor API key. Pass `process.env.CURSOR_API_KEY` to keep it out of source code.
+</ParamField>
+
+### `SDKModel` fields
+
+<ResponseField name="id" type="string" required>
+  Stable model identifier. Pass this as `ModelSelection.id`.
+</ResponseField>
+
+<ResponseField name="displayName" type="string">
+  Human-readable model name. Falls back to `id` when absent.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Short description of the model's capabilities.
+</ResponseField>
+
+<ResponseField name="variants" type="object[]">
+  Pre-configured parameter combinations. Each variant has a `displayName`, an optional `description`, an `isDefault` flag, and a `params` array of `{ id, value }` pairs.
+
+  <Expandable title="Variant fields">
+    <ResponseField name="displayName" type="string">
+      Label for this variant, for example `"Fast"` or `"Thinking"`.
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Optional description of when to use this variant.
+    </ResponseField>
+    <ResponseField name="isDefault" type="boolean">
+      Whether this variant should be selected by default.
+    </ResponseField>
+    <ResponseField name="params" type="object[]">
+      Array of `{ id: string, value: string }` pairs that encode the variant's configuration.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="parameters" type="object[]">
+  Individual configurable dimensions—such as effort level or thinking mode—and the values each dimension accepts.
+
+  <Expandable title="Parameter fields">
+    <ResponseField name="id" type="string">
+      Stable parameter identifier, for example `"effort"` or `"thinking"`.
+    </ResponseField>
+    <ResponseField name="displayName" type="string">
+      Human-readable label for this parameter.
+    </ResponseField>
+    <ResponseField name="values" type="object[]">
+      Accepted values, each with a `value` string and `displayName`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## `ModelSelection` type
+
+`ModelSelection` is the object you pass to `Agent.create()` and `agent.send()`:
+
+```typescript
+type ModelSelection = {
+  id: string
+  params?: Array<{ id: string; value: string }>
+}
+```
+
+<ParamField body="id" type="string" required>
+  The model ID, matching `SDKModel.id` from the catalog.
+</ParamField>
+
+<ParamField body="params" type="object[]">
+  Optional parameter overrides. Each entry is `{ id, value }` where `id` is a parameter identifier (such as `"effort"`) and `value` is one of its accepted values (such as `"high"`).
+</ParamField>
+
+## Passing a model to `Agent.create()` and `agent.send()`
+
+Supply `ModelSelection` as the `model` option when creating an agent:
+
+```typescript agent.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "Coding agent",
+  model: { id: "composer-2" },
+  local: { cwd: process.cwd() },
+})
+```
+
+You can also override the model per-run by passing it to `agent.send()`. This is useful when you want most runs to use the agent default but occasionally switch to a faster or more capable model:
+
+```typescript
+const run = await agent.send(prompt, {
+  model: { id: "claude-4.6-sonnet", params: [{ id: "effort", value: "high" }] },
+})
+```
+
+<Note>
+  Model overrides on `agent.send()` only apply to local execution. Cloud agents use the model set at creation time.
+</Note>
+
+## Model variants and parameters
+
+Some models expose variants that bundle a recommended set of parameters into a single choice. The encoding pattern used by the SDK maps well-known parameter combinations to specific model IDs at the local runtime layer:
+
+| Model family | Parameter | Values |
+|---|---|---|
+| `gpt-5.4` | `effort` | `none`, `low`, `medium`, `high`, `xhigh` |
+| `gpt-5.4` | `fast` | enabled / disabled |
+| `gpt-5.3-codex` | `effort` | `medium`, `high`, `xhigh` |
+| `claude-4.6-sonnet` | `effort` | `medium`, `high` |
+| `claude-4.6-sonnet` | `thinking` | enabled / disabled |
+| `claude-4.6-opus` | `effort` | `high`, `max` |
+| `claude-4.6-opus` | `thinking` | enabled / disabled (when effort is `high`) |
+| `claude-4.6-opus` | `fast` | enabled / disabled (when effort is `high`) |
+
+A `variant.params` array encodes these choices. When you select a variant, its `params` become your `ModelSelection.params`.
+
+## Listing models for a UI
+
+When building a picker, you need to deduplicate choices that represent the same selection and disambiguate labels that appear more than once across the catalog. The pattern below shows how to turn `SDKModel[]` into a flat list of labeled choices:
+
+```typescript list-models.ts
+import { Cursor, type ModelSelection, type SDKModel } from "@cursor/sdk"
+
+type ModelChoice = {
+  label: string
+  value: ModelSelection
+  description?: string
+}
+
+async function listModelChoices(apiKey: string): Promise<ModelChoice[]> {
+  const models = await Cursor.models.list({ apiKey })
+
+  // Expand each model into one choice per variant (or one choice if no variants)
+  const choices: ModelChoice[] = models.flatMap((model) => {
+    const baseLabel = model.displayName || model.id
+    const variants = model.variants ?? []
+
+    if (variants.length === 0) {
+      return [{ label: baseLabel, value: { id: model.id }, description: model.description }]
+    }
+
+    return variants.map((variant) => ({
+      label: variant.displayName ? `${baseLabel} - ${variant.displayName}` : baseLabel,
+      value: { id: model.id, params: variant.params },
+      description: variant.description ?? model.description,
+    }))
+  })
+
+  // Fall back to a stable default if the catalog is empty
+  return choices.length > 0
+    ? choices
+    : [{ label: "composer-2", value: { id: "composer-2" } }]
+}
+```
+
+<Tip>
+  Use the `description` field from `SDKModel` and its variants to show capability hints—such as "Best for complex reasoning" or "Optimized for speed"—alongside each choice.
+</Tip>
+
+## Default model
+
+All SDK cookbook examples use `"composer-2"` as the fallback model ID when no environment variable is set:
+
+```typescript
+model: { id: process.env.CURSOR_MODEL ?? "composer-2" }
+```
+
+`"composer-2"` is always available and requires no `params`. It is a safe starting point for new integrations.

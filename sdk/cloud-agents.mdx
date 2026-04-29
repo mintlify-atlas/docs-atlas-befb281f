@@ -1,0 +1,171 @@
+---
+title: "Run agents in Cursor Cloud against GitHub repos"
+description: "Run agents against GitHub repos in Cursor's managed cloud environment, auto-detect the current repo and branch, switch execution modes, and trigger PR creation."
+---
+
+Cloud agents run in Cursor's managed cloud environment rather than on your local machine. Instead of pointing the agent at a local directory, you give it one or more GitHub repository URLs. The SDK clones the repository into an isolated environment, runs the agent there, and can automatically open a pull request with the changes.
+
+Use cloud execution when you want to run repo-level tasks—code reviews, automated fixes, PR generation—without modifying your local workspace. Use local execution when you are iterating on files already on disk and want immediate feedback.
+
+## When to use cloud vs. local
+
+<CardGroup cols={2}>
+  <Card title="Cloud" icon="cloud">
+    - Repo-level tasks and automated PRs
+    - CI-style workflows triggered by events
+    - Running against branches you haven't checked out
+    - Keeping your local workspace untouched
+  </Card>
+  <Card title="Local" icon="laptop">
+    - Iterating on files already on disk
+    - Workspaces without a GitHub remote
+    - Tasks where you want to review changes before committing
+    - Development loops with a hot-reload preview
+  </Card>
+</CardGroup>
+
+## `Agent.create()` with the `cloud` option
+
+Pass a `cloud` object instead of `local` to run in Cursor's managed environment:
+
+```typescript
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "Cloud coding agent",
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  cloud: {
+    repos: [
+      {
+        url: "https://github.com/owner/repo",
+        startingRef: "main",
+      },
+    ],
+  },
+})
+```
+
+<ParamField body="cloud.repos" type="object[]" required>
+  Array of repositories to mount. At least one entry is required.
+</ParamField>
+
+<ParamField body="cloud.repos[].url" type="string" required>
+  GitHub HTTPS URL for the repository, for example `"https://github.com/owner/repo"`. SSH remotes (`git@github.com:owner/repo`) and `ssh://` URLs are also accepted and are normalized to HTTPS internally.
+</ParamField>
+
+<ParamField body="cloud.repos[].startingRef" type="string">
+  Branch name or commit SHA to check out before the agent starts. Omit this field to use the repository's default branch.
+</ParamField>
+
+<Note>
+  Cloud execution currently requires the repository to be hosted on GitHub. Passing a remote hosted elsewhere throws an error at agent creation time.
+</Note>
+
+## Auto-detecting the repository from git
+
+If your code runs inside a git working tree, you can read `remote.origin.url` and the current branch to populate the `repos` array automatically. The following pattern—drawn from the [coding-agent-cli](https://github.com/getcursor/cursor/tree/main/cookbook/sdk/coding-agent-cli) example—handles both HTTPS and SSH remotes:
+
+```typescript detect-repo.ts
+import { execFileSync } from "node:child_process"
+import { Agent } from "@cursor/sdk"
+
+function runGit(cwd: string, args: string[]): string | undefined {
+  try {
+    return execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeGitHubRemote(remote: string): string | undefined {
+  const trimmed = remote.trim().replace(/\.git$/, "")
+  const sshMatch = trimmed.match(/^git@github\.com:(.+\/.+)$/)
+  const sshUrlMatch = trimmed.match(/^ssh:\/\/git@github\.com\/(.+\/.+)$/)
+  const httpsMatch = trimmed.match(/^https:\/\/github\.com\/(.+\/.+)$/)
+  const repoPath = sshMatch?.[1] ?? sshUrlMatch?.[1] ?? httpsMatch?.[1]
+  return repoPath ? `https://github.com/${repoPath}` : undefined
+}
+
+function detectCloudRepository(cwd: string) {
+  const remote = runGit(cwd, ["config", "--get", "remote.origin.url"])
+  if (!remote) {
+    throw new Error("Cloud mode requires a git repository with remote.origin.url set.")
+  }
+
+  const url = normalizeGitHubRemote(remote)
+  if (!url) {
+    throw new Error("Cloud mode currently expects remote.origin.url to point at GitHub.")
+  }
+
+  const branch = runGit(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+  const startingRef = branch && branch !== "HEAD" ? branch : undefined
+
+  return startingRef ? { url, startingRef } : { url }
+}
+
+// Detect the repo and create the agent
+const repository = detectCloudRepository(process.cwd())
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  name: "Lightweight coding agent",
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  cloud: {
+    repos: [repository],
+  },
+})
+
+const run = await agent.send("Open a PR that adds a CHANGELOG entry for the latest commit.")
+await run.wait()
+await agent[Symbol.asyncDispose]()
+```
+
+## Switching between local and cloud
+
+If you allow users to choose execution mode at runtime, recreate the agent when the mode changes. Creating a new agent is required because `local` and `cloud` are mutually exclusive at construction time. Wait for any active run to finish first:
+
+```typescript
+// Do not switch while a run is active — wait for it to complete
+const previousAgent = agent
+
+agent = await Agent.create({
+  apiKey,
+  name: "Coding agent",
+  model: { id: "composer-2" },
+  cloud: { repos: [repository] },
+})
+
+// Dispose the previous agent after the new one is ready
+await previousAgent[Symbol.asyncDispose]()
+```
+
+<Warning>
+  Switching execution mode silently loses the previous agent's conversation history. If continuity matters, persist the transcript before disposing.
+</Warning>
+
+## Automatic PR creation
+
+To request a PR, include the instruction in your prompt — for example, "Open a pull request with these changes". The [Agent Kanban](/examples/agent-kanban) example also passes an `autoCreatePR` option when creating cloud agents through its server API, which triggers a PR once the agent finishes its run.
+
+<Note>
+  `autoCreatePR` is used internally by the agent-kanban example server. It is not a documented field on the public `Agent.create()` options in `@cursor/sdk`. Check the official SDK changelog at [cursor.com/docs/api/sdk/typescript](https://cursor.com/docs/api/sdk/typescript) for PR automation updates.
+</Note>
+
+## Rate limiting
+
+Cloud agents consume Cursor API quota. If you are creating many agents in parallel—as the [Agent Kanban](/examples/agent-kanban) board does—you may encounter rate limit errors. Implement a queue or concurrency limit to stay within your account's limits.
+
+## Related examples
+
+<CardGroup cols={2}>
+  <Card title="Agent Kanban" icon="columns-3" href="/examples/agent-kanban">
+    A Next.js kanban board that creates and monitors multiple cloud agents, each working on a different GitHub repository task.
+  </Card>
+  <Card title="Coding Agent CLI" icon="terminal" href="/examples/coding-agent-cli">
+    A terminal app that supports switching between local and cloud execution modes interactively.
+  </Card>
+</CardGroup>

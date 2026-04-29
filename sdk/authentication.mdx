@@ -1,0 +1,90 @@
+---
+title: "Authenticate with the Cursor SDK"
+description: "Get a Cursor API key, set the CURSOR_API_KEY environment variable, and pass credentials to Agent.create(), Cursor.me(), and Cursor.models.list()."
+---
+
+The Cursor SDK authenticates every request with an API key tied to your Cursor account. You generate the key once in the Cursor dashboard and then provide it to the SDK either through an environment variable or directly in code.
+
+## Get an API key
+
+<Steps>
+  <Step title="Open the integrations dashboard">
+    Go to [cursor.com/dashboard/integrations](https://cursor.com/dashboard/integrations) and sign in with your Cursor account.
+  </Step>
+  <Step title="Create a new API key">
+    Click **Create API key**, give it a name, and copy the generated value. The key is shown only once.
+  </Step>
+  <Step title="Set the environment variable">
+    Export the key in your shell or add it to a `.env` file that is loaded before your process starts.
+
+    ```bash
+    export CURSOR_API_KEY="your-api-key"
+    ```
+  </Step>
+</Steps>
+
+## Passing the key to the SDK
+
+### Environment variable (recommended)
+
+When `CURSOR_API_KEY` is set in the environment, pass `process.env.CURSOR_API_KEY` as the `apiKey` option. This keeps the key out of your source code and makes it easy to rotate.
+
+```typescript index.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  model: { id: "composer-2" },
+  local: { cwd: process.cwd() },
+})
+```
+
+The same pattern applies to `Cursor.me()` and `Cursor.models.list()`:
+
+```typescript
+import { Cursor } from "@cursor/sdk"
+
+const user = await Cursor.me({ apiKey: process.env.CURSOR_API_KEY })
+const models = await Cursor.models.list({ apiKey: process.env.CURSOR_API_KEY })
+```
+
+### Explicit `apiKey` option
+
+You can pass any string as `apiKey`—useful when you load credentials from a secrets manager at runtime.
+
+```typescript
+import { Agent } from "@cursor/sdk"
+
+const apiKey = await mySecretsManager.get("CURSOR_API_KEY")
+
+const agent = await Agent.create({
+  apiKey,
+  model: { id: "composer-2" },
+  local: { cwd: process.cwd() },
+})
+```
+
+## Validating a key
+
+Call `Cursor.me()` to confirm that a key is valid before using it in a longer workflow. If the key is rejected, the SDK throws an error that you can catch and present to the user.
+
+```typescript
+import { Cursor } from "@cursor/sdk"
+
+try {
+  await Cursor.me({ apiKey })
+} catch {
+  // Key is invalid — prompt the user to check the value
+  throw new Error("The Cursor API key could not be validated. Please check the key and try again.")
+}
+```
+
+<Note>
+  The SDK surfaces this as `InvalidCursorApiKeyError` when a key fails validation, so you can catch it by name and show a targeted error message.
+</Note>
+
+## Keep your key secret
+
+<Warning>
+  Never commit your API key to source control. Add `.env` to `.gitignore` and use a secrets manager or CI environment variable for production deployments.
+</Warning>

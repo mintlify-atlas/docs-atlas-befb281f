@@ -1,0 +1,181 @@
+---
+title: "Handle errors from the Cursor SDK"
+description: "Recognize SDK error types by their code property, handle run failures from run.wait(), cancel active runs safely, and dispose agents reliably with try/finally."
+---
+
+The Cursor SDK surfaces errors in two main places: typed error classes thrown by setup and validation functions, and run-level outcomes returned by `run.wait()`. Understanding which errors can occur—and where—lets you write integrations that fail gracefully and release resources reliably.
+
+## Error classes
+
+The SDK and its companion libraries define error classes with a stable `code` property. Match on `code` rather than `message` for programmatic error handling.
+
+### `InvalidCursorApiKeyError`
+
+**Code:** `"invalid_api_key"`
+
+Thrown by `validateCursorApiKey()` when the provided key cannot be verified against the Cursor API. This happens when the key is malformed, expired, or belongs to an account that no longer has SDK access.
+
+```typescript
+import { InvalidCursorApiKeyError } from "./server"
+
+try {
+  await validateCursorApiKey(apiKey)
+} catch (error) {
+  if (error instanceof InvalidCursorApiKeyError) {
+    // error.code === "invalid_api_key"
+    console.error("Key rejected:", error.message)
+  }
+}
+```
+
+<Tip>
+  Cursor API keys start with `crsr_`. Validate the prefix before making a network call to give users faster feedback.
+</Tip>
+
+### `MissingCursorApiKeyError`
+
+**Code:** `"missing_api_key"`
+
+Thrown when a session-based request arrives without any API key—neither in the request headers nor in persisted settings. Prompt the user to enter a key before retrying.
+
+### `UnknownAppBuilderSessionError` / `UnknownSessionError`
+
+**Code:** `"unknown_session"`
+
+Thrown when a session ID is not found in the server's in-memory map. Sessions are not persisted across process restarts; users must create a new session after a server restart.
+
+### `ProjectNameGenerationTimeoutError`
+
+**Code:** `"project_name_timeout"`
+
+Thrown when the model does not return a project name within the configured timeout (default: 15 seconds). This error is non-fatal—catch it and fall back to a user-provided or heuristic name.
+
+### General `Error` for cloud mode requirements
+
+Cloud agents throw plain `Error` instances (not typed subclasses) when preconditions are not met:
+
+```typescript
+// No remote.origin.url configured
+throw new Error("Cloud mode requires a git repository with remote.origin.url set.")
+
+// Remote is not a GitHub URL
+throw new Error("Cloud mode currently expects remote.origin.url to point at GitHub.")
+```
+
+Catch these before calling `Agent.create()` with the `cloud` option.
+
+## Run status from `run.wait()`
+
+`run.wait()` resolves—never rejects—with a `RunResult` object. Inspect `result.status` to determine how the run ended:
+
+```typescript
+const result = await run.wait()
+
+switch (result.status) {
+  case "FINISHED":
+    console.log(`Completed in ${result.durationMs}ms`)
+    break
+  default:
+    console.warn(`Run ended with status: ${result.status}`)
+    break
+}
+```
+
+A status of `"FINISHED"` means the agent completed normally. Any other value—such as a cancelled or failed status—means the run did not complete successfully. Log the status and surface it to the user rather than silently discarding it.
+
+<Note>
+  `run.wait()` resolves even when the run was cancelled or errored. Always check `result.status` instead of assuming success.
+</Note>
+
+## Cancelling a run
+
+Before calling `run.cancel()`, check whether cancellation is supported for the current run:
+
+```typescript
+if (run.supports("cancel")) {
+  await run.cancel()
+} else {
+  const reason = run.unsupportedReason("cancel")
+  console.log(`Cannot cancel: ${reason}`)
+}
+```
+
+`run.supports("cancel")` returns `false` once a run has already completed or when the run type does not support cancellation. `run.unsupportedReason("cancel")` returns a human-readable explanation you can show to users.
+
+## Forcing past a stuck run with `local.force`
+
+A local agent rejects `agent.send()` if a previous run is still active. Pass `local: { force: true }` to expire the stuck run and start a new one:
+
+```typescript
+const run = await agent.send(prompt, {
+  model: modelSelection,
+  local: { force: true },
+})
+```
+
+<Warning>
+  Use `force` only as a recovery mechanism. Forcing a run while the previous one is still writing files can leave the workspace in an inconsistent state.
+</Warning>
+
+## Cleanup with `try/finally` and `asyncDispose`
+
+Always release agent resources in a `finally` block. The following pattern—taken from `CodingAgentSession.sendPrompt` in the coding-agent-cli—ensures cleanup even when the stream throws:
+
+```typescript send-prompt.ts
+import { Agent } from "@cursor/sdk"
+
+const agent = await Agent.create({
+  apiKey: process.env.CURSOR_API_KEY,
+  model: { id: process.env.CURSOR_MODEL ?? "composer-2" },
+  local: { cwd: process.cwd() },
+})
+
+try {
+  const run = await agent.send("Refactor the authentication module.")
+
+  for await (const event of run.stream()) {
+    // handle events
+  }
+
+  const result = await run.wait()
+  console.log(result.status)
+} finally {
+  // Always runs — even if stream() or run.wait() throws
+  await agent[Symbol.asyncDispose]()
+}
+```
+
+If you are using TypeScript 5.2 or later, `await using` handles disposal automatically when the block exits:
+
+```typescript
+{
+  await using agent = await Agent.create({
+    apiKey: process.env.CURSOR_API_KEY,
+    model: { id: "composer-2" },
+    local: { cwd: process.cwd() },
+  })
+
+  const run = await agent.send("Add JSDoc comments to all exported functions.")
+  await run.wait()
+} // agent[Symbol.asyncDispose]() is called automatically here
+```
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Validate API keys before creating sessions">
+    Call `Cursor.me({ apiKey })` or a wrapper like `validateCursorApiKey()` before you create an agent or session. A clear `InvalidCursorApiKeyError` at setup time is easier to debug than a generic network failure mid-run.
+  </Accordion>
+
+  <Accordion title="Always call run.wait() in a try/finally">
+    `run.wait()` flushes any remaining work and closes the run. Skipping it can leave the agent in an inconsistent state where future `send()` calls fail or return stale results.
+  </Accordion>
+
+  <Accordion title="Check run.supports() before calling run.cancel()">
+    Calling `run.cancel()` on an unsupported run throws. Always guard with `run.supports("cancel")` and surface `run.unsupportedReason("cancel")` to users when cancellation is unavailable.
+  </Accordion>
+
+  <Accordion title="Never swallow error codes">
+    Each error class has a stable `code` property. Log or surface `error.code` alongside the message so users and monitoring tools can distinguish key errors from session errors from timeout errors.
+  </Accordion>
+</AccordionGroup>
